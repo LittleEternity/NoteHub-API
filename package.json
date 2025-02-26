@@ -14,14 +14,23 @@
     "@types/http-errors": "^2.0.4",
     "@types/node": "^22.13.5",
     "@types/passport": "^1.0.17",
+    "@types/passport-local": "^1.0.38",
+    "bcryptjs": "^3.0.2",
     "cookie-parser": "~1.4.4",
     "debug": "~2.6.9",
     "express": "~4.16.1",
     "http-errors": "~1.6.3",
     "jade": "~1.11.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.10.2",
     "morgan": "~1.9.1",
+    "passport": "^0.7.0",
+    "passport-local": "^1.0.0",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.7.3"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.9"
   }
 }
