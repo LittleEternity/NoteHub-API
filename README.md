@@ -1,5 +1,6 @@
 # NoteHub-API
-一个基于 Express 框架构建的 NoteHub 项目服务端项目
+
+一个基于 Express 框架构建的服务端项目，用于为 NoteHub 项目提供 API Service
 
 
 ## 目录说明
