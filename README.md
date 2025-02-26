@@ -1,7 +1,5 @@
 # NoteHub-API
-
 一个基于 Express 框架构建的服务端项目，用于为 NoteHub 项目提供 API Service
-
 
 ## 目录说明
 
@@ -36,25 +34,28 @@
 - **`integration/`**：存放集成测试文件。
 
 ### 其他文件
-- **`app.js`**：应用的入口文件。
+- **`app.ts`**：应用的入口文件。
 - **`package.json`**：项目依赖和配置文件。
 - **`README.md`**：项目说明文档。
 
 ## 安装和运行
+
 ### 环境
-Node 20+
+Node版本 >= 20
 
 ### 安装依赖
 ```bash
 npm install
 ```
 
-### 启动应用 
-```bash
-npm run start
-```
+### 开发环境 
+- **`start`**：开发环境快速启动。
+- **`dev`**：开发环境热重启。
 
-### 运行测试
-```bash
-npm test
-```
+### 测试环境
+- **`test`**：执行单元测试。
+
+### 生产环境构建
+- **`build`**：构建，编译 TypeScript 代码为 JavaScript。
+- **`start:prod`**：生产环境启动。
+- **`deploy`**：一键部署（编译 + 启动）。
