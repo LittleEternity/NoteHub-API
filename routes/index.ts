@@ -1,8 +1,11 @@
-var express = require("express");
-var router = express.Router();
-const { homeController } = require("../controllers/homeController");
+import express from "express";
+import authRoutes from "./authRoutes";
+import protectedRoutes from "./protectedRoutes";
 
-/* GET home page. */
-router.get("/", homeController);
+const router = express.Router();
 
-module.exports = router;
+// 确保路径正确
+router.use("/auth", authRoutes);
+router.use("/api", protectedRoutes);
+
+export default router;
