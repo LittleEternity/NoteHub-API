@@ -10,7 +10,7 @@ export interface INote extends Document {
   lastEditorId: string; // 最后编辑者ID
   coverImage?: string; // 封面图片
   icon?: string; // 图标名称
-  content?: any; // 笔记内容
+  content?: string[]; // 笔记内容
   createdAt: Date; // 创建时间
   updatedAt: Date; // 更新时间
   parentNoteId?: string; // 父笔记ID
@@ -52,13 +52,9 @@ const NoteSchema: Schema = new Schema(
       default: null,
     },
     content: {
-      type: Schema.Types.Mixed,
-      default: [
-        {
-          type: "text",
-          value: "",
-        },
-      ],
+      type: [String],
+      ref: "Node",
+      default: [],
     },
     parentNoteId: {
       type: String,

@@ -1,5 +1,9 @@
 import { Request, Response, NextFunction } from "express";
 import Note from "../models/note";
+import Node from "../models/node";
+import mongoose from "mongoose";
+import type { INote } from "../models/note";
+import node from "../models/node";
 
 // 创建笔记
 export const createNote = async (
@@ -41,9 +45,11 @@ export const getNoteList = async (
   try {
     const { creatorId } = req.query;
     const userId = req.user && req.user.userId;
-    const notes = await Note.find({ creatorId: creatorId || userId }).sort({
-      updatedAt: -1,
-    }).select("-_id");
+    const notes = await Note.find({ creatorId: creatorId || userId })
+      .sort({
+        updatedAt: -1,
+      })
+      .select("-_id");
     res.json({
       success: true,
       data: notes,
@@ -60,26 +66,49 @@ export const getNoteDetail = async (
   next: NextFunction
 ) => {
   try {
-    const { noteId } = req.params;
+    const { noteId } = req.query;
     // 如果用户没传 noteId 则默认返回根节点
+    let result: any = {};
     if (!noteId) {
-      const notes = await Note.find({ parentNoteId: null }).sort({
-        updatedAt: -1,
-      }).select("-_id");
-      return res.json({
-        success: true,
-        data: notes.length > 0 ? notes[0] : [],
-      });
+      result = await Note.findOne({ parentNoteId: null }).select("-_id");
     } else {
-        const note = await Note.findById(noteId);
-        if (!note) {
-          return res.status(404).json({ message: "笔记未找到" });
-        }
-        res.json({
-          success: true,
-          data: note,
-        });
+      result = await Note.findOne({ noteId }).select("-_id");
     }
+    const note = {
+      noteId: result.noteId,
+      creatorId: result.creatorId,
+      lastEditorId: result.lastEditorId,
+      title: result.title,
+      content: result.content,
+      coverImage: result.coverImage,
+      icon: result.icon,
+      parentNoteId: result.parentNoteId,
+    };
+    if (!note) {
+      return res.status(404).json({ message: "笔记未找到" });
+    }
+    const nodeIds = note.content || [];
+    if (nodeIds && Array.isArray(nodeIds) && nodeIds.length > 0) {
+      const nodes = await Node.find({
+        nodeId: { $in: nodeIds },
+      })
+        .select("-_id")
+        .sort({ sort: 1 }); // 按照 sort 字段升序排列
+      const parsedNodes = nodes.map((node: any) => {
+        return {
+          nodeId: node.nodeId,
+          type: node.type,
+          value: node.value,
+        };
+      });
+      note.content = parsedNodes;
+    } else {
+      note.content = [];
+    }
+    res.json({
+      success: true,
+      data: note,
+    });
   } catch (error) {
     next(error);
   }
@@ -90,33 +119,98 @@ export const updateNote = async (
   req: Request,
   res: Response,
   next: NextFunction
-) => {
+): Promise<void> => {
   try {
-    const { noteId } = req.params;
-    const userId = req.user && req.user.userId;
+    const userId = req.user?.userId;
     if (!userId) {
-        return res.status(401).json({ message: "未提供有效的 userId" });
-      }
-    const { title, content, coverImage, icon } = req.body;
-    const note = await Note.findById(noteId).select("-_id");
-    if (!note) {
-      return res.status(404).json({ message: "笔记未找到" });
+      res.status(401).json({ message: "未提供有效的 userId" });
+      return;
     }
-    note.title = title;
-    note.content = content;
-    note.coverImage = coverImage;
-    note.icon = icon;
-    note.lastEditorId = userId || '';
-    await note.save();
-    res.json({
-      success: true,
-      message: "笔记更新成功",
-      data: note,
-    });
+    const { noteId, title, content, coverImage, icon } = req.body;
+    const note: any = await Note.findOne({ noteId });
+    if (!note) {
+      res.status(404).json({ message: "笔记未找到" });
+      return;
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      if (content) {
+        const newNodes: string[] = []; // 存储新创建的节点的 nodeId
+        const existingNodeIds: string[] = []; // 存储已存在的节点的 nodeId
+        for (let index = 0; index < content.length; index++) {
+          const item = content[index];
+          if (item.nodeId) {
+            const node = await Node.findOneAndUpdate(
+              { nodeId: item.nodeId },
+              {
+                type: item.type,
+                sort: index,
+                value: item.value,
+                noteId: note.noteId,
+              },
+              { new: true, session }
+            );
+            if (node) existingNodeIds.push(node.nodeId);
+          } else {
+            const [newNode] = await Node.create(
+              [
+                {
+                  type: item.type,
+                  sort: index,
+                  value: item.value,
+                  noteId: note.noteId,
+                },
+              ],
+              { session }
+            );
+            newNodes.push(newNode.nodeId);
+          }
+        }
+
+        if (!note.content || !Array.isArray(note.content)) {
+          note.content = [...existingNodeIds, ...newNodes];
+        } else {
+          const currentNodeIds = note.content.map((node: any) => node.nodeId);
+          const nodesToDelete = currentNodeIds.filter(
+            (id: any) => !existingNodeIds.includes(id) && !newNodes.includes(id)
+          );
+          if (nodesToDelete.length > 0) {
+            await Node.deleteMany(
+              { nodeId: { $in: nodesToDelete } },
+              { session }
+            );
+          }
+          note.content = [...existingNodeIds, ...newNodes];
+        }
+      }
+
+      note.title = title;
+      note.coverImage = coverImage;
+      note.icon = icon;
+      note.lastEditorId = userId;
+
+      await note.save({ session });
+      await session.commitTransaction();
+
+      res.json({
+        success: true,
+        message: "笔记更新成功",
+        data: note,
+      });
+    } catch (error) {
+      await session.abortTransaction();
+      next(error);
+    } finally {
+      session.endSession();
+    }
   } catch (error) {
     next(error);
   }
 };
+// ... existing code ...
 
 // 删除笔记
 export const deleteNote = async (
@@ -171,9 +265,11 @@ export const getNoteChildren = async (
 ) => {
   try {
     const { noteId } = req.params;
-    const notes = await Note.find({ parentNoteId: noteId }).sort({
-      updatedAt: -1,
-    }).select("-_id");
+    const notes = await Note.find({ parentNoteId: noteId })
+      .sort({
+        updatedAt: -1,
+      })
+      .select("-_id");
     res.json({
       success: true,
       data: notes,
@@ -194,9 +290,11 @@ export const searchNotes = async (
     if (typeof keyword !== "string") {
       return res.status(400).json({ message: "请提供有效的搜索关键字" });
     }
-    const notes = await Note.find({ $text: { $search: keyword } }).sort({
-      updatedAt: -1,
-    }).select("-_id");
+    const notes = await Note.find({ $text: { $search: keyword } })
+      .sort({
+        updatedAt: -1,
+      })
+      .select("-_id");
     res.json({
       success: true,
       data: notes,
@@ -242,7 +340,9 @@ export const getNoteTree = async (
   try {
     const { creatorId } = req.query;
     const userId = req.user && req.user.userId;
-    const notes = await Note.find({ creatorId: creatorId || userId }).sort({ updatedAt: -1 }).select("-_id");
+    const notes = await Note.find({ creatorId: creatorId || userId })
+      .sort({ updatedAt: -1 })
+      .select("-_id");
     const tree = buildNoteTree(notes);
     res.status(200).json({
       success: true,
