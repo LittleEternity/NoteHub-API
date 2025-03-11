@@ -47,16 +47,12 @@ export const login = async (
     await user.save();
 
     // 生成 JWT
-    const token = jwt.sign(
-      { userId: user.userId },
-      JWT_SECRET,
-      { expiresIn: '15m' }
-    );
-    const refreshToken = jwt.sign(
-      { userId: user.userId },
-      REFRESH_SECRET,
-      { expiresIn: '7d' }
-    );
+    const token = jwt.sign({ userId: user.userId }, JWT_SECRET, {
+      expiresIn: "15m",
+    });
+    const refreshToken = jwt.sign({ userId: user.userId }, REFRESH_SECRET, {
+      expiresIn: "7d",
+    });
 
     res.status(201).json({
       success: true,
@@ -107,12 +103,16 @@ export const register = async (
     });
 
     // 4. 创建默认笔记
-    await createNote({
-      body: {
-        creatorId: newUser.userId,
-        lastEditorId: newUser.userId,
-      }
-    } as Request, {} as Response, next);
+    await createNote(
+      {
+        body: {
+          creatorId: newUser.userId,
+          lastEditorId: newUser.userId,
+        },
+      } as Request,
+      {} as Response,
+      next
+    );
 
     // 5. 返回响应
     res.status(201).json({
@@ -142,16 +142,7 @@ export const refreshToken = async (
     if (!refreshToken) {
       return res.status(400).json({ message: "未提供刷新令牌" });
     }
-
-    console.log(refreshToken);
-    console.log(REFRESH_SECRET);
-
-    const decoded = jwt.verify(
-      refreshToken,
-      REFRESH_SECRET || ""
-    );
-
-    console.log(decoded);
+    const decoded = jwt.verify(refreshToken, REFRESH_SECRET || "");
 
     // 添加类型断言和检查
     if (
@@ -163,12 +154,12 @@ export const refreshToken = async (
       const newAccessToken = jwt.sign(
         { userId: decoded.userId },
         JWT_SECRET as string,
-        { expiresIn: '15m' }
+        { expiresIn: "15m" }
       );
       const newRefreshToken = jwt.sign(
         { userId: decoded.userId },
         REFRESH_SECRET,
-        { expiresIn: '7d' }
+        { expiresIn: "7d" }
       );
       res.json({
         tokenType: "Bearer",

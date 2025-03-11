@@ -13,7 +13,7 @@ export const createNote = async (
 ) => {
   try {
     const { creatorId, lastEditorId, parentNoteId } = req.body;
-    const userId = req.user && req.user.userId;
+    const userId = (req.user && req.user.userId) || "";
     const newNote = await Note.create({
       creatorId: creatorId || userId,
       lastEditorId: lastEditorId || creatorId || userId,
@@ -21,8 +21,11 @@ export const createNote = async (
       content: null,
       coverImage: null,
       icon: null,
-      parentNoteId: parentNoteId || null,
+      parentNoteId: parentNoteId ? [parentNoteId] : null,
     });
+
+    // 记录用户打开笔记的操作
+    await Note.recordUserPath(userId, newNote.noteId);
 
     res &&
       res.status &&
@@ -67,10 +70,13 @@ export const getNoteDetail = async (
 ) => {
   try {
     const { noteId } = req.query;
+    const userId = (req.user && req.user.userId) || "";
     // 如果用户没传 noteId 则默认返回根节点
     let result: any = {};
     if (!noteId) {
-      result = await Note.findOne({ parentNoteId: null }).select("-_id");
+      result = await Note.findOne({ parentNoteId: null }).select("-_id").sort({
+        updatedAt: -1,
+      });
     } else {
       result = await Note.findOne({ noteId }).select("-_id");
     }
@@ -105,9 +111,17 @@ export const getNoteDetail = async (
     } else {
       note.content = [];
     }
+    // 记录用户打开笔记的操作
+    await Note.recordUserPath(userId, note.noteId);
+    // 获取用户当前笔记的层级路径
+    const path = await Note.getHierarchyPath(userId);
+
     res.json({
       success: true,
-      data: note,
+      data: {
+        ...note,
+        path,
+      },
     });
   } catch (error) {
     next(error);
@@ -220,7 +234,7 @@ export const deleteNote = async (
 ) => {
   try {
     const { noteId } = req.params;
-    const note = await Note.findById(noteId);
+    const note = await Note.findOne({ noteId });
     if (!note) {
       return res.status(404).json({ message: "笔记未找到" });
     }
@@ -241,38 +255,27 @@ export const moveNote = async (
   next: NextFunction
 ) => {
   try {
-    const { noteId, parentNoteId } = req.params;
-    const note = await Note.findById(noteId);
+    const { noteId, lastParentNoteId, newParentNoteId } = req.params;
+    const note = await Note.findOne({ noteId });
     if (!note) {
       return res.status(404).json({ message: "笔记未找到" });
     }
-    note.parentNoteId = parentNoteId;
+    if (note.parentNoteId && note.parentNoteId.length) {
+      if (lastParentNoteId) {
+        note.parentNoteId = note.parentNoteId.filter(
+          (id: any) => id !== lastParentNoteId
+        );
+      }
+      if (newParentNoteId) {
+        note.parentNoteId.push(newParentNoteId);
+      }
+    } else {
+      note.parentNoteId = [newParentNoteId];
+    }
     await note.save();
     res.json({
       success: true,
       message: "笔记移动成功",
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// 获取笔记子节点
-export const getNoteChildren = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { noteId } = req.params;
-    const notes = await Note.find({ parentNoteId: noteId })
-      .sort({
-        updatedAt: -1,
-      })
-      .select("-_id");
-    res.json({
-      success: true,
-      data: notes,
     });
   } catch (error) {
     next(error);
@@ -317,10 +320,13 @@ function buildNoteTree(notes: any[]) {
 
   // 然后遍历笔记，将子笔记添加到其父笔记的 children 数组中
   notes.forEach((note) => {
-    if (note.parentNoteId) {
-      const parent = noteMap[note.parentNoteId];
-      if (parent) {
-        parent.children.push(note);
+    if (note.parentNoteId && note.parentNoteId.length) {
+      for (let i = 0; i < note.parentNoteId.length; i++) {
+        const parentId = note.parentNoteId[i];
+        const parent = noteMap[parentId];
+        if (parent) {
+          parent.children.push(note);
+        }
       }
     } else {
       // 如果没有父笔记，将其作为根节点添加到树中
@@ -341,43 +347,12 @@ export const getNoteTree = async (
     const { creatorId } = req.query;
     const userId = req.user && req.user.userId;
     const notes = await Note.find({ creatorId: creatorId || userId })
-      .sort({ updatedAt: -1 })
+      .sort({ createdAt: 1 })
       .select("-_id");
     const tree = buildNoteTree(notes);
     res.status(200).json({
       success: true,
       data: tree,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// 获取笔记路径
-export const getNotePath = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { noteId } = req.params;
-    const note = await Note.findById(noteId);
-    if (!note) {
-      return res.status(404).json({ message: "笔记未找到" });
-    }
-    const pathIds = note.path.split("/");
-    const notes = await Note.find({ noteId: { $in: pathIds } }).select(
-      "title noteId"
-    );
-    const path = notes
-      .sort((a, b) => pathIds.indexOf(a.noteId) - pathIds.indexOf(b.noteId))
-      .map((n) => n.title)
-      .join("/");
-    res.json({
-      success: true,
-      data: {
-        path,
-      },
     });
   } catch (error) {
     next(error);

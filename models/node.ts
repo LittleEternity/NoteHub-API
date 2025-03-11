@@ -42,7 +42,9 @@ const NodeSchema = new Schema(
         "list", // 列表
         "quote", // 引用
         "divider", // 分割线
-        "heading", // 标题
+        "heading1", // 一级标题
+        "heading2", // 二级标题
+        "heading3", // 三级标题
         "page", // 页面
         "file", // 文件
         "gallery", // 画廊

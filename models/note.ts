@@ -3,6 +3,9 @@ import { v4 as uuidv4 } from "uuid";
 import short from "short-uuid";
 const translator = short();
 
+// 存储每个用户的操作路径
+const userPaths = new Map<string, string[]>();
+
 export interface INote extends Document {
   noteId: string; // 笔记ID
   title: string; // 笔记标题
@@ -13,8 +16,14 @@ export interface INote extends Document {
   content?: string[]; // 笔记内容
   createdAt: Date; // 创建时间
   updatedAt: Date; // 更新时间
-  parentNoteId?: string; // 父笔记ID
-  path: string; // 笔记路径
+  parentNoteId?: string[]; // 父笔记ID
+}
+
+export interface NoteModel extends mongoose.Model<INote> {
+  recordUserPath: (userId: string, noteId: string) => Promise<void>;
+  getHierarchyPath: (
+    userId: string
+  ) => Promise<{ noteId: string; title: string }[]>;
 }
 
 const NoteSchema: Schema = new Schema(
@@ -57,13 +66,9 @@ const NoteSchema: Schema = new Schema(
       default: [],
     },
     parentNoteId: {
-      type: String,
+      type: [String],
       ref: "Note",
-      default: null,
-    },
-    path: {
-      type: String,
-      default: "",
+      default: [],
     },
   },
   {
@@ -75,37 +80,54 @@ const NoteSchema: Schema = new Schema(
 // 添加复合索引优化查询
 NoteSchema.index({ creatorId: 1, updatedAt: -1 });
 NoteSchema.index({ parentNoteId: 1 });
-NoteSchema.index({ path: 1 });
 
 // 全文搜索索引
 NoteSchema.index({ title: "text", content: "text" });
 
-// 保存前更新路径信息
-NoteSchema.pre("save", async function (this: INote, next) {
-  // 尝试将 this 上下文对象转换为 INote 类型
-  let note = this as INote;
-
-  if (note.parentNoteId) {
-    try {
-      // 查找父笔记
-      const parentNote = await mongoose
-        .model<INote>("Note")
-        .findById(note.parentNoteId);
-      if (parentNote) {
-        // 更新笔记路径
-        note.path = `${parentNote.path}/${note.noteId}`;
+// 记录用户打开笔记的操作
+NoteSchema.statics.recordUserPath = async function (
+  userId: string,
+  noteId: string
+) {
+  const currentPath = userPaths.get(userId) || [];
+  const note = this.findOne({ noteId });
+  if (note) {
+    if (currentPath.length > 0) {
+      const lastNoteId = currentPath[currentPath.length - 1];
+      const lastNote = this.findOne({ lastNoteId });
+      if (
+        lastNote &&
+        note.parentNoteId &&
+        note.parentNoteId.includes(lastNoteId)
+      ) {
+        currentPath.push(noteId);
+      } else {
+        // 如果当前笔记不是上一个笔记的子笔记，重新开始记录路径
+        currentPath.length = 0;
+        currentPath.push(noteId);
       }
-    } catch (error) {
-      // 若查找父笔记失败，记录错误信息
-      console.error("Failed to find parent note:", error);
+    } else {
+      currentPath.push(noteId);
     }
-  } else {
-    // 若没有父笔记，笔记路径为自身 ID
-    note.path = note.noteId;
+    userPaths.set(userId, currentPath);
   }
+};
 
-  // 继续执行保存操作
-  next();
-});
+// 获取用户当前笔记的层级路径
+NoteSchema.statics.getHierarchyPath = async function (userId: string) {
+  const currentPath = userPaths.get(userId) || [];
+  let path = [];
+  for (let i = 0; i < currentPath.length; i++) {
+    const noteId = currentPath[i];
+    const note = await this.findOne({ noteId });
+    if (note) {
+      path.push({
+        noteId: note.noteId,
+        title: note.title,
+      });
+    }
+  }
+  return path;
+};
 
-export default mongoose.model<INote>("Note", NoteSchema);
+export default mongoose.model<INote, NoteModel>("Note", NoteSchema);
