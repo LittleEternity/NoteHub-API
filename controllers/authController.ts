@@ -48,7 +48,7 @@ export const login = async (
 
     // 生成 JWT
     const token = jwt.sign({ userId: user.userId }, JWT_SECRET, {
-      expiresIn: "15m",
+      expiresIn: "1m",
     });
     const refreshToken = jwt.sign({ userId: user.userId }, REFRESH_SECRET, {
       expiresIn: "7d",

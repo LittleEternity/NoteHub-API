@@ -4,6 +4,7 @@ import Node from "../models/node";
 import mongoose from "mongoose";
 import type { INote } from "../models/note";
 import node from "../models/node";
+import { title } from "process";
 
 // 创建笔记
 export const createNote = async (
@@ -23,9 +24,6 @@ export const createNote = async (
       icon: null,
       parentNoteId: parentNoteId ? [parentNoteId] : null,
     });
-
-    // 记录用户打开笔记的操作
-    await Note.recordUserPath(userId, newNote.noteId);
 
     res &&
       res.status &&
@@ -69,16 +67,17 @@ export const getNoteDetail = async (
   next: NextFunction
 ) => {
   try {
-    const { noteId } = req.query;
+    const { noteId, pathChain } = req.body;
+    console.log(noteId, pathChain);
     const userId = (req.user && req.user.userId) || "";
     // 如果用户没传 noteId 则默认返回根节点
     let result: any = {};
     if (!noteId) {
-      result = await Note.findOne({ parentNoteId: null }).select("-_id").sort({
+      result = await Note.findOne({ parentNoteId: null }).sort({
         updatedAt: -1,
       });
     } else {
-      result = await Note.findOne({ noteId }).select("-_id");
+      result = await Note.findOne({ noteId });
     }
     const note = {
       noteId: result.noteId,
@@ -97,30 +96,48 @@ export const getNoteDetail = async (
     if (nodeIds && Array.isArray(nodeIds) && nodeIds.length > 0) {
       const nodes = await Node.find({
         nodeId: { $in: nodeIds },
-      })
-        .select("-_id")
-        .sort({ sort: 1 }); // 按照 sort 字段升序排列
-      const parsedNodes = nodes.map((node: any) => {
-        return {
-          nodeId: node.nodeId,
-          type: node.type,
-          value: node.value,
-        };
-      });
+      }).sort({ sort: 1 }); // 按照 sort 字段升序排列
+      const parsedNodes = await Promise.all(
+        nodes.map(async (node: any) => {
+          if (node.type === "page") {
+            const newNoteId = node.value?.noteId;
+            let page = await Note.findOne({ noteId: newNoteId }).select("-_id");
+            return {
+              nodeId: node.nodeId,
+              type: node.type,
+              value: {
+                noteId: page?.noteId,
+                title: page?.title,
+                coverImage: page?.coverImage,
+                icon: page?.icon,
+                createdAt: page?.createdAt,
+                updatedAt: page?.updatedAt,
+              },
+            };
+          } else {
+            return {
+              nodeId: node.nodeId,
+              type: node.type,
+              value: node.value,
+            };
+          }
+        })
+      );
       note.content = parsedNodes;
     } else {
       note.content = [];
     }
-    // 记录用户打开笔记的操作
-    await Note.recordUserPath(userId, note.noteId);
-    // 获取用户当前笔记的层级路径
-    const path = await Note.getHierarchyPath(userId);
+
+    const paths = await Note.getHierarchyPath(
+      note.noteId,
+      pathChain as string[]
+    );
 
     res.json({
       success: true,
       data: {
         ...note,
-        path,
+        path: paths,
       },
     });
   } catch (error) {
@@ -233,7 +250,7 @@ export const deleteNote = async (
   next: NextFunction
 ) => {
   try {
-    const { noteId } = req.params;
+    const { noteId } = req.body;
     const note = await Note.findOne({ noteId });
     if (!note) {
       return res.status(404).json({ message: "笔记未找到" });
@@ -315,7 +332,7 @@ function buildNoteTree(notes: any[]) {
   // 首先将所有笔记存储到一个映射中，方便快速查找
   notes.forEach((note) => {
     note.children = [];
-    noteMap[note._id] = note;
+    noteMap[note.noteId] = note;
   });
 
   // 然后遍历笔记，将子笔记添加到其父笔记的 children 数组中
@@ -325,7 +342,12 @@ function buildNoteTree(notes: any[]) {
         const parentId = note.parentNoteId[i];
         const parent = noteMap[parentId];
         if (parent) {
-          parent.children.push(note);
+          parent.children.push({
+            noteId: note.noteId,
+            title: note.title,
+            icon: note.icon,
+            children: note.children,
+          });
         }
       }
     } else {
@@ -352,7 +374,14 @@ export const getNoteTree = async (
     const tree = buildNoteTree(notes);
     res.status(200).json({
       success: true,
-      data: tree,
+      data: tree.map((item) => {
+        return {
+          noteId: item.noteId,
+          title: item.title,
+          icon: item.icon,
+          children: item.children,
+        };
+      }),
     });
   } catch (error) {
     next(error);

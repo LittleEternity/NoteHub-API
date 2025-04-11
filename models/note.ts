@@ -3,9 +3,6 @@ import { v4 as uuidv4 } from "uuid";
 import short from "short-uuid";
 const translator = short();
 
-// 存储每个用户的操作路径
-const userPaths = new Map<string, string[]>();
-
 export interface INote extends Document {
   noteId: string; // 笔记ID
   title: string; // 笔记标题
@@ -16,13 +13,13 @@ export interface INote extends Document {
   content?: string[]; // 笔记内容
   createdAt: Date; // 创建时间
   updatedAt: Date; // 更新时间
-  parentNoteId?: string[]; // 父笔记ID
+  parentNoteId: string[]; // 父笔记ID
 }
 
 export interface NoteModel extends mongoose.Model<INote> {
-  recordUserPath: (userId: string, noteId: string) => Promise<void>;
   getHierarchyPath: (
-    userId: string
+    noteId: string,
+    pathChain: string[]
   ) => Promise<{ noteId: string; title: string }[]>;
 }
 
@@ -84,50 +81,40 @@ NoteSchema.index({ parentNoteId: 1 });
 // 全文搜索索引
 NoteSchema.index({ title: "text", content: "text" });
 
-// 记录用户打开笔记的操作
-NoteSchema.statics.recordUserPath = async function (
-  userId: string,
-  noteId: string
-) {
-  const currentPath = userPaths.get(userId) || [];
-  const note = this.findOne({ noteId });
-  if (note) {
-    if (currentPath.length > 0) {
-      const lastNoteId = currentPath[currentPath.length - 1];
-      const lastNote = this.findOne({ lastNoteId });
-      if (
-        lastNote &&
-        note.parentNoteId &&
-        note.parentNoteId.includes(lastNoteId)
-      ) {
-        currentPath.push(noteId);
-      } else {
-        // 如果当前笔记不是上一个笔记的子笔记，重新开始记录路径
-        currentPath.length = 0;
-        currentPath.push(noteId);
-      }
-    } else {
-      currentPath.push(noteId);
-    }
-    userPaths.set(userId, currentPath);
-  }
-};
+// ... existing code ...
 
-// 获取用户当前笔记的层级路径
-NoteSchema.statics.getHierarchyPath = async function (userId: string) {
-  const currentPath = userPaths.get(userId) || [];
-  let path = [];
-  for (let i = 0; i < currentPath.length; i++) {
-    const noteId = currentPath[i];
-    const note = await this.findOne({ noteId });
-    if (note) {
-      path.push({
-        noteId: note.noteId,
-        title: note.title,
-      });
-    }
+// 添加静态方法查找笔记的指定层级路径
+NoteSchema.statics.getHierarchyPath = async function (
+  this: NoteModel,
+  noteId: string,
+  pathChain: string[] = []
+): Promise<{ noteId: string; title: string }[]> {
+  const note = await this.findOne({ noteId });
+  if (!note) {
+    return [];
   }
-  return path;
-};
+  if (pathChain.length === 0) {
+    if (!note.parentNoteId || note.parentNoteId.length === 0) {
+      return [{ noteId: note.noteId, title: note.title }];
+    }
+    // 如果没有提供父链，默认选择第一个父笔记
+    const firstParentId = note.parentNoteId[0];
+    const parentPath = await this.getHierarchyPath(firstParentId, []);
+    return [...parentPath, { noteId: note.noteId, title: note.title }];
+  }
+  const currentParentId = pathChain.shift();
+  if (
+    !currentParentId ||
+    (note.parentNoteId && !note.parentNoteId.includes(currentParentId))
+  ) {
+    throw new Error("Invalid parent chain provided");
+  }
+  const parentPath = await this.getHierarchyPath(currentParentId, pathChain);
+  return [...parentPath, { noteId: note.noteId, title: note.title }];
+} as (
+  this: mongoose.Model<INote>,
+  noteId: string,
+  pathChain?: string[]
+) => Promise<{ noteId: string; title: string }[]>;
 
 export default mongoose.model<INote, NoteModel>("Note", NoteSchema);
